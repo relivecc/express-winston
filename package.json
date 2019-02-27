@@ -17,7 +17,7 @@
     "middleware",
     "colors"
   ],
-  "version": "2.4.0",
+  "version": "2.5.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/bithavoc/express-winston.git"
@@ -48,7 +48,7 @@
   },
   "dependencies": {
     "chalk": "~0.4.0",
-    "lodash": "~4.11.1"
+    "lodash": "~4.17.5"
   },
   "devDependencies": {
     "blanket": "^1.2.2",
