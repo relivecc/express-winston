@@ -1,10 +1,7 @@
-var util = require('util');
-
 var mocks = require('node-mocks-http');
-var Promise = require('promise/lib/es6-extensions');
 var should = require('should');
 var _ = require('lodash');
-var winston = require('winston');
+var Transport = require('winston-transport');
 
 var expressWinston = require('../index.js');
 
@@ -12,28 +9,34 @@ expressWinston.ignoredRoutes.push('/ignored');
 expressWinston.responseWhitelist.push('body');
 expressWinston.bodyBlacklist.push('potato');
 
-var MockTransport = function (test, options) {
-  test.transportInvoked = false;
+class MockTransport extends Transport {
+  constructor(test, options) {
+    super(options || {});
 
-  winston.Transport.call(this, options || {});
+    this._test = test;
+    this._test.transportInvoked = false;
+  }
 
-  this.log = function (level, msg, meta, cb) {
-    test.transportInvoked = true;
-    test.log.level = level;
-    test.log.msg = msg;
-    test.log.meta = meta;
+  log(info, cb) {
+    this._test.transportInvoked = true;
+    this._test.log.level = info.level;
+    this._test.log.msg = info.message;
+    this._test.log.meta = info.meta;
+    this._test.log.metaField = info.metaField;
+    this._test.log.foobar = info.foobar;
     this.emit('logged');
     return cb();
-  };
-};
-util.inherits(MockTransport, winston.Transport);
+  }
+}
 
 function mockReq(reqMock) {
   var reqSpec = _.extend({
     method: 'GET',
     url: '/hello',
     headers: {
-      'header-1': 'value 1'
+      'header-1': 'value 1',
+      'header-2': 'value 2',
+      'header-3': 'value 3'
     },
     query: {
       val: '1'
@@ -150,12 +153,12 @@ describe('express-winston', function () {
       middleware.length.should.eql(4);
     });
 
-    it('should use the exported requestWhitelist', function() {
+    it('should use the exported requestWhitelist', function () {
       var originalWhitelist = expressWinston.requestWhitelist;
       expressWinston.requestWhitelist = ['foo'];
 
       var options = {
-        req: {foo: "bar"}
+        req: { foo: 'bar' }
       };
       return errorLoggerTestHelper(options).then(function (result) {
         // Return to the original value for later tests
@@ -163,23 +166,6 @@ describe('express-winston', function () {
 
         result.log.meta.req.should.have.property('foo');
         result.log.meta.req.should.not.have.property('url');
-      });
-    });
-
-    it('should use the exported defaultRequestFilter', function() {
-      var originalRequestFilter = expressWinston.defaultRequestFilter;
-      expressWinston.defaultRequestFilter = function() {
-        return 'foo';
-      };
-
-      var options = {
-        req: {foo: "bar"}
-      };
-      return errorLoggerTestHelper(options).then(function (result) {
-        // Return to the original value for later tests
-        expressWinston.defaultRequestFilter = originalRequestFilter;
-
-        result.log.meta.req.url.should.equal('foo');
       });
     });
 
@@ -197,7 +183,7 @@ describe('express-winston', function () {
       });
 
       it('should find a custom level of "warn"', function () {
-        var testHelperOptions = {loggerOptions: {level:'warn'}};
+        var testHelperOptions = { loggerOptions: { level: 'warn' } };
         return errorLoggerTestHelper(testHelperOptions).then(function (result) {
           result.log.level.should.eql('warn');
         });
@@ -229,11 +215,56 @@ describe('express-winston', function () {
       });
     });
 
+    describe('exceptionToMeta option', function () {
+      it('should, use exceptionToMeta function when given', function () {
+        function exceptionToMeta(error) {
+          return {
+            stack: error.stack && error.stack.split('\n')
+          };
+        }
+
+        var testHelperOptions = { loggerOptions: { exceptionToMeta: exceptionToMeta } };
+        return errorLoggerTestHelper(testHelperOptions).then(function (result) {
+          result.log.meta.stack.should.be.ok();
+          result.log.meta.should.not.have.property('trace');
+        });
+      });
+
+      it('should, use getAllInfo function when not given', function () {
+        var testHelperOptions = { loggerOptions: {} };
+        return errorLoggerTestHelper(testHelperOptions).then(function (result) {
+          result.log.meta.should.have.property('date');
+          result.log.meta.should.have.property('process');
+          result.log.meta.should.have.property('os');
+          result.log.meta.should.have.property('trace');
+          result.log.meta.should.have.property('stack');
+        });
+      });
+    });
+
+    describe('blacklistedMetaFields option', function () {
+      it('should, remove given fields from the meta result', function () {
+        var testHelperOptionsWithBlacklist = { loggerOptions: { blacklistedMetaFields: ['trace'] } };
+        return errorLoggerTestHelper(testHelperOptionsWithBlacklist).then(function (result) {
+          result.log.meta.should.not.have.property('trace');
+        });
+      });
+    });
+
     describe('metaField option', function () {
       it('should, when using a custom metaField, log the custom metaField', function () {
-        var testHelperOptions = {loggerOptions: {metaField: 'metaField'}};
+        var testHelperOptions = { loggerOptions: { metaField: 'metaField' } };
         return errorLoggerTestHelper(testHelperOptions).then(function (result) {
-          result.log.meta.metaField.req.should.be.ok();
+          result.log.metaField.req.should.be.ok();
+        });
+      });
+    });
+
+    describe('requestField option', function () {
+      it('should, when using custom requestField, have the request in the alternative property', function () {
+        var testHelperOptions = { loggerOptions: { requestField: 'httpRequest' } };
+        return errorLoggerTestHelper(testHelperOptions).then(function (result) {
+          result.log.meta.httpRequest.should.be.ok();
         });
       });
     });
@@ -241,7 +272,7 @@ describe('express-winston', function () {
     describe('requestWhitelist option', function () {
       it('should default to global requestWhitelist', function () {
         var options = {
-          req: {foo: "bar"}
+          req: { foo: 'bar' }
         };
         return errorLoggerTestHelper(options).then(function (result) {
           result.log.meta.req.should.not.have.property('foo');
@@ -250,7 +281,7 @@ describe('express-winston', function () {
 
       it('should use specified requestWhitelist', function () {
         var options = {
-          req: {foo: "bar"},
+          req: { foo: 'bar' },
           loggerOptions: {
             requestWhitelist: ['foo']
           }
@@ -260,36 +291,53 @@ describe('express-winston', function () {
           result.log.meta.req.should.not.have.property('method');
         });
       });
+
+      it('should work with nested requestWhitelist', function () {
+        var options = {
+          req: {foo: {test: "bar"}},
+          loggerOptions: {
+            requestWhitelist: ['foo.test']
+          }
+        };
+        return errorLoggerTestHelper(options).then(function (result) {
+          result.log.meta.req.should.have.property('foo');
+          result.log.meta.req.foo.should.have.property('test');
+        });  
+      });
     });
 
     describe('dynamicMeta option', function () {
-      var testHelperOptions = {
-        req: {
-          body: {
-            age: 42,
-            potato: 'Russet'
+      var testHelperOptions;
+
+      beforeEach(function () {
+        testHelperOptions = {
+          req: {
+            body: {
+              age: 42,
+              potato: 'Russet'
+            },
+            user: {
+              username: 'john@doe.com',
+              role: 'operator'
+            }
           },
-          user: {
-            username: "john@doe.com",
-            role: "operator"
-          }
-        },
-        res: {
-          custom: 'custom response runtime field'
-        },
-        originalError: new Error('FOO'),
-        loggerOptions: {
-          meta: true,
-          dynamicMeta: function(req, res, err) {
-            return {
-              user: req.user.username,
-              role: req.user.role,
-              custom: res.custom,
-              errMessage: err.message
+          res: {
+            custom: 'custom response runtime field'
+          },
+          originalError: new Error('FOO'),
+          loggerOptions: {
+            meta: true,
+            dynamicMeta: function (req, res, err) {
+              return {
+                user: req.user.username,
+                role: req.user.role,
+                custom: res.custom,
+                errMessage: err.message
+              };
             }
           }
-        }
-      };
+        };
+      });
 
       it('should contain dynamic meta data if meta and dynamicMeta activated', function () {
         return errorLoggerTestHelper(testHelperOptions).then(function (result) {
@@ -303,6 +351,28 @@ describe('express-winston', function () {
 
       it('should work with metaField option', function () {
         testHelperOptions.loggerOptions.metaField = 'metaField';
+        return errorLoggerTestHelper(testHelperOptions).then(function (result) {
+          result.log.metaField.req.should.be.ok();
+          result.log.metaField.user.should.equal('john@doe.com');
+          result.log.metaField.role.should.equal('operator');
+          result.log.metaField.custom.should.equal('custom response runtime field');
+          result.log.metaField.errMessage.should.equal('FOO');
+        });
+      });
+
+      it('should work with metaField . separated option', function () {
+        testHelperOptions.loggerOptions.metaField = 'meta.metaField';
+        return errorLoggerTestHelper(testHelperOptions).then(function (result) {
+          result.log.meta.metaField.req.should.be.ok();
+          result.log.meta.metaField.user.should.equal('john@doe.com');
+          result.log.meta.metaField.role.should.equal('operator');
+          result.log.meta.metaField.custom.should.equal('custom response runtime field');
+          result.log.meta.metaField.errMessage.should.equal('FOO');
+        });
+      });
+
+      it('should work with metaField array option', function () {
+        testHelperOptions.loggerOptions.metaField = ['meta', 'metaField'];
         return errorLoggerTestHelper(testHelperOptions).then(function (result) {
           result.log.meta.metaField.req.should.be.ok();
           result.log.meta.metaField.user.should.equal('john@doe.com');
@@ -324,8 +394,33 @@ describe('express-winston', function () {
       });
 
       it('should throw an error if dynamicMeta is not a function', function () {
-        var loggerFn = expressWinston.errorLogger.bind(expressWinston, {dynamicMeta: 12});
+        var loggerFn = expressWinston.errorLogger.bind(expressWinston, { dynamicMeta: 12 });
         loggerFn.should.throw();
+      });
+    });
+
+    describe('skip option', function () {
+      it('should log error by default', function () {
+        var options = {
+          req: { foo: 'bar' }
+        };
+
+        return errorLoggerTestHelper(options).then(function (result) {
+          result.transportInvoked.should.eql(true);
+        });
+      });
+
+      it('should not log error when function returns true', function () {
+        var options = {
+          req: { foo: 'bar' },
+          loggerOptions: {
+            skip: function () {return true;}
+          }
+        };
+
+        return errorLoggerTestHelper(options).then(function (result) {
+          result.transportInvoked.should.eql(false);
+        });
       });
     });
   });
@@ -364,6 +459,7 @@ describe('express-winston', function () {
       function next(req, res, next) {
         res.end();
       }
+
       var testHelperOptions = {
         next: next,
         req: {
@@ -381,6 +477,7 @@ describe('express-winston', function () {
       function next(req, res, next) {
         res.end();
       }
+
       var testHelperOptions = {
         next: next,
         req: {
@@ -412,6 +509,7 @@ describe('express-winston', function () {
 
         res.end('{ "message": "Hi!  I\'m a chunk!" }');
       }
+
       var testHelperOptions = {
         next: next,
         loggerOptions: {
@@ -435,12 +533,12 @@ describe('express-winston', function () {
       });
     });
 
-    it('should use the exported requestWhitelist', function() {
+    it('should use the exported requestWhitelist', function () {
       var originalWhitelist = expressWinston.requestWhitelist;
       expressWinston.requestWhitelist = ['foo'];
 
       var options = {
-        req: {foo: "bar"}
+        req: { foo: 'bar' }
       };
       return loggerTestHelper(options).then(function (result) {
         // Return to the original value for later tests
@@ -451,12 +549,12 @@ describe('express-winston', function () {
       });
     });
 
-    it('should use the exported bodyWhitelist', function() {
+    it('should use the exported bodyWhitelist', function () {
       var originalWhitelist = expressWinston.bodyWhitelist;
       expressWinston.bodyWhitelist = ['foo'];
 
       var options = {
-        req: {body: {foo: 'bar', baz: 'qux'}}
+        req: { body: { foo: 'bar', baz: 'qux' } }
       };
       return loggerTestHelper(options).then(function (result) {
         // Return to the original value for later tests
@@ -467,12 +565,12 @@ describe('express-winston', function () {
       });
     });
 
-    it('should use the exported bodyBlacklist', function() {
+    it('should use the exported bodyBlacklist', function () {
       var originalBlacklist = expressWinston.bodyBlacklist;
       expressWinston.bodyBlacklist = ['foo'];
 
       var options = {
-        req: {body: {foo: 'bar', baz: 'qux'}}
+        req: { body: { foo: 'bar', baz: 'qux' } }
       };
       return loggerTestHelper(options).then(function (result) {
         // Return to the original value for later tests
@@ -483,12 +581,12 @@ describe('express-winston', function () {
       });
     });
 
-    it('should use the exported responseWhitelist', function() {
+    it('should use the exported responseWhitelist', function () {
       var originalWhitelist = expressWinston.responseWhitelist;
       expressWinston.responseWhitelist = ['foo'];
 
       var options = {
-        res: {foo: 'bar', baz: 'qux'}
+        res: { foo: 'bar', baz: 'qux' }
       };
       return loggerTestHelper(options).then(function (result) {
         // Return to the original value for later tests
@@ -499,14 +597,14 @@ describe('express-winston', function () {
       });
     });
 
-    it('should use the exported defaultRequestFilter', function() {
+    it('should use the exported defaultRequestFilter', function () {
       var originalRequestFilter = expressWinston.defaultRequestFilter;
-      expressWinston.defaultRequestFilter = function() {
+      expressWinston.defaultRequestFilter = function () {
         return 'foo';
       };
 
       var options = {
-        req: {foo: "bar"}
+        req: { foo: 'bar' }
       };
       return loggerTestHelper(options).then(function (result) {
         // Return to the original value for later tests
@@ -516,14 +614,14 @@ describe('express-winston', function () {
       });
     });
 
-    it('should use the exported defaultResponseFilter', function() {
+    it('should use the exported defaultResponseFilter', function () {
       var originalResponseFilter = expressWinston.defaultResponseFilter;
-      expressWinston.defaultResponseFilter = function() {
+      expressWinston.defaultResponseFilter = function () {
         return 'foo';
       };
 
       var options = {
-        req: {foo: "bar"}
+        req: { foo: 'bar' }
       };
       return loggerTestHelper(options).then(function (result) {
         // Return to the original value for later tests
@@ -533,14 +631,14 @@ describe('express-winston', function () {
       });
     });
 
-    it('should use the exported defaultSkip', function() {
+    it('should use the exported defaultSkip', function () {
       var originalSkip = expressWinston.defaultSkip;
-      expressWinston.defaultSkip = function() {
+      expressWinston.defaultSkip = function () {
         return true;
       };
 
       var options = {
-        req: {foo: "bar"}
+        req: { foo: 'bar' }
       };
       return loggerTestHelper(options).then(function (result) {
         // Return to the original value for later tests
@@ -550,12 +648,12 @@ describe('express-winston', function () {
       });
     });
 
-    it('should use the exported ignoredRoutes', function() {
+    it('should use the exported ignoredRoutes', function () {
       var originalIgnoredRoutes = expressWinston.ignoredRoutes;
       expressWinston.ignoredRoutes = ['/foo-route'];
 
       var options = {
-        req: {url: '/foo-route'}
+        req: { url: '/foo-route' }
       };
       return loggerTestHelper(options).then(function (result) {
         // Return to the original value for later tests
@@ -577,12 +675,13 @@ describe('express-winston', function () {
 
         res.end('{ "message": "Hi!  I\'m a chunk!" }');
       }
+
       var testHelperOptions = {
         next: next,
         req: {
           body: {
-            username: "bobby",
-            password: "top-secret",
+            username: 'bobby',
+            password: 'top-secret',
             age: 42,
             potato: 'Russet'
           },
@@ -631,9 +730,10 @@ describe('express-winston', function () {
       });
     });
 
-    describe('when middleware function is invoked on a route that returns JSON', function() {
-      it('should parse JSON in response body', function() {
-        var bodyObject = { "message": "Hi!  I\'m a chunk!" };
+    describe('when middleware function is invoked on a route that returns JSON', function () {
+      it('should parse JSON in response body', function () {
+        var bodyObject = { 'message': 'Hi!  I\'m a chunk!' };
+
         function next(req, res, next) {
           // Set Content-Type in a couple different case types, just in case.
           // Seems like the mock response doesn't quite handle the case
@@ -642,12 +742,52 @@ describe('express-winston', function () {
           res.setHeader('content-type', 'application/json');
           res.end(JSON.stringify(bodyObject));
         }
-        return loggerTestHelper({next: next}).then(function(result) {
-            result.log.meta.res.body.should.eql(bodyObject);
+
+        return loggerTestHelper({ next: next }).then(function (result) {
+          result.log.meta.res.body.should.eql(bodyObject);
         });
       });
 
-      it('should not blow up when response body is invalid JSON', function() {
+      it('should be string in response body with alternative property name', function () {
+        function next(req, res, next) {
+          // Set Content-Type in a couple different case types, just in case.
+          // Seems like the mock response doesn't quite handle the case
+          // translation on these right.
+          res.end('foo');
+        }
+
+        return loggerTestHelper({ next: next, loggerOptions: { responseField: 'response' } })
+          .then(function (result) {
+            result.log.meta.response.body.should.eql('foo');
+          });
+      });
+
+      it('should merge filtered request/response under property', function () {
+        function next(req, res, next) {
+          res.end('foo');
+        }
+
+        return loggerTestHelper(
+          {
+            next,
+            loggerOptions:
+              {
+                responseField: 'httpRequest',
+                requestField: 'httpRequest',
+                responseWhitelist: [...expressWinston.responseWhitelist, 'responseTime']
+              }
+          })
+          .then(function (result) {
+            result.log.meta.httpRequest.body.should.eql('foo');
+            result.log.meta.httpRequest.statusCode.should.eql(200);
+            should.exist(result.log.meta.httpRequest.responseTime);
+            should.exist(result.log.meta.httpRequest.url);
+            should.exist(result.log.meta.httpRequest.headers);
+            should.exist(result.log.meta.httpRequest.method);
+          });
+      });
+
+      it('should not blow up when response body is invalid JSON', function () {
         function next(req, res, next) {
           // Set Content-Type in a couple different case types, just in case.
           // Seems like the mock response doesn't quite handle the case
@@ -656,13 +796,14 @@ describe('express-winston', function () {
           res.setHeader('content-type', 'application/json');
           res.end('}');
         }
-        return loggerTestHelper({next: next});
+
+        return loggerTestHelper({ next: next });
       });
     });
 
     describe('when middleware function is invoked on a route that should be ignored (by .ignoredRoutes)', function () {
       var testHelperOptions = {
-        req: {url: '/ignored'}
+        req: { url: '/ignored' }
       };
 
       it('should not invoke the transport', function () {
@@ -696,7 +837,7 @@ describe('express-winston', function () {
         });
       });
 
-      it('should not emit colors when colorize option is false', function() {
+      it('should not emit colors when colorize option is false', function () {
         var testHelperOptions = {
           loggerOptions: {
             colorize: false,
@@ -713,7 +854,7 @@ describe('express-winston', function () {
         });
       });
 
-      it('should not emit colors when colorize option is not present', function() {
+      it('should not emit colors when colorize option is not present', function () {
         var testHelperOptions = {
           loggerOptions: {
             colorize: false,
@@ -831,6 +972,34 @@ describe('express-winston', function () {
           result.log.msg.should.eql('Foo GET /all-the-things');
         });
       });
+
+      it('can be a function', function () {
+        var testHelperOptions = {
+          loggerOptions: {
+            msg: function (req) { return 'fn ' + req.url; }
+          },
+          req: {
+            url: '/all-the-things'
+          }
+        };
+        return loggerTestHelper(testHelperOptions).then(function (result) {
+          result.log.msg.should.eql('fn /all-the-things');
+        });
+      });
+
+      it('can be interpolated when it is a function', function () {
+        var testHelperOptions = {
+          loggerOptions: {
+            msg: function () { return 'fn {{req.url}}'; }
+          },
+          req: {
+            url: '/all-the-things'
+          }
+        };
+        return loggerTestHelper(testHelperOptions).then(function (result) {
+          result.log.msg.should.eql('fn /all-the-things');
+        });
+      });
     });
 
     describe('ignoreRoute option', function () {
@@ -881,7 +1050,7 @@ describe('express-winston', function () {
           }
         };
         return loggerTestHelper(testHelperOptions).then(function (result) {
-          result.log.meta.foobar.req.should.be.ok();
+          result.log.foobar.req.should.be.ok();
         });
       });
     });
@@ -891,7 +1060,7 @@ describe('express-winston', function () {
         var testHelperOptions = {
           loggerOptions: {
             skip: function (req, res) {
-              return req.url.indexOf('sandwich') != -1
+              return req.url.indexOf('sandwich') != -1;
             }
           },
           req: {
@@ -907,7 +1076,7 @@ describe('express-winston', function () {
         var testHelperOptions = {
           loggerOptions: {
             skip: function (req, res) {
-              return req.url.indexOf('sandwich') != -1
+              return req.url.indexOf('sandwich') != -1;
             }
           },
           req: {
@@ -986,7 +1155,7 @@ describe('express-winston', function () {
               res.status(200).end('{ "message": "Hi!  I\'m a chunk!" }');
             },
             loggerOptions: {
-              statusLevels: {success: 'silly'}
+              statusLevels: { success: 'silly' }
             },
             transportOptions: {
               level: 'silly'
@@ -1003,7 +1172,7 @@ describe('express-winston', function () {
               res.status(403).end('{ "message": "Hi!  I\'m a chunk!" }');
             },
             loggerOptions: {
-              statusLevels: {warn: 'debug'}
+              statusLevels: { warn: 'debug' }
             },
             transportOptions: {
               level: 'silly'
@@ -1020,7 +1189,7 @@ describe('express-winston', function () {
               res.status(500).end('{ "message": "Hi!  I\'m a chunk!" }');
             },
             loggerOptions: {
-              statusLevels: {error: 'verbose'}
+              statusLevels: { error: 'verbose' }
             },
             transportOptions: {
               level: 'silly'
@@ -1034,62 +1203,112 @@ describe('express-winston', function () {
     });
 
     describe('when levels set to a function', function () {
-        it('should have custom status level provided by the function when 100 <= statusCode < 400', function () {
-          var testHelperOptions = {
-            next: function (req, res, next) {
-              res.status(200).end('{ "message": "Hi!  I\'m a chunk!" }');
-            },
-            loggerOptions: {
-              level: function(req,res) { return 'silly'; }
-            },
-            transportOptions: {
-              level: 'silly'
-            }
-          };
-          return loggerTestHelper(testHelperOptions).then(function (result) {
-            result.log.level.should.equal('silly');
-          });
+      it('should have custom status level provided by the function when 100 <= statusCode < 400', function () {
+        var testHelperOptions = {
+          next: function (req, res, next) {
+            res.status(200).end('{ "message": "Hi!  I\'m a chunk!" }');
+          },
+          loggerOptions: {
+            level: function (req, res) { return 'silly'; }
+          },
+          transportOptions: {
+            level: 'silly'
+          }
+        };
+        return loggerTestHelper(testHelperOptions).then(function (result) {
+          result.log.level.should.equal('silly');
         });
+      });
 
-        it('should have custom status level provided by the function when 400 <= statusCode < 500', function () {
-          var testHelperOptions = {
-            next: function (req, res, next) {
-              res.status(403).end('{ "message": "Hi!  I\'m a chunk!" }');
-            },
-            loggerOptions: {
-              level: function(req,res) { return 'silly'; }
-            },
-            transportOptions: {
-              level: 'silly'
-            }
-          };
-          return loggerTestHelper(testHelperOptions).then(function (result) {
-            result.log.level.should.equal('silly');
-          });
+      it('should have custom status level provided by the function when 400 <= statusCode < 500', function () {
+        var testHelperOptions = {
+          next: function (req, res, next) {
+            res.status(403).end('{ "message": "Hi!  I\'m a chunk!" }');
+          },
+          loggerOptions: {
+            level: function (req, res) { return 'silly'; }
+          },
+          transportOptions: {
+            level: 'silly'
+          }
+        };
+        return loggerTestHelper(testHelperOptions).then(function (result) {
+          result.log.level.should.equal('silly');
         });
+      });
 
-        it('should have custom status level provided by the function when 500 <= statusCode', function () {
-          var testHelperOptions = {
-            next: function (req, res, next) {
-              res.status(500).end('{ "message": "Hi!  I\'m a chunk!" }');
-            },
-            loggerOptions: {
-              level: function(req,res) { return 'silly'; }
-            },
-            transportOptions: {
-              level: 'silly'
-            }
-          };
-          return loggerTestHelper(testHelperOptions).then(function (result) {
-            result.log.level.should.equal('silly');
-          });
+      it('should have custom status level provided by the function when 500 <= statusCode', function () {
+        var testHelperOptions = {
+          next: function (req, res, next) {
+            res.status(500).end('{ "message": "Hi!  I\'m a chunk!" }');
+          },
+          loggerOptions: {
+            level: function (req, res) { return 'silly'; }
+          },
+          transportOptions: {
+            level: 'silly'
+          }
+        };
+        return loggerTestHelper(testHelperOptions).then(function (result) {
+          result.log.level.should.equal('silly');
         });
+      });
+    });
+
+    describe('headerBlacklist option', function () {
+      it('should default to global defaultHeaderBlackList', function () {
+        return loggerTestHelper().then(function (result) {
+          result.log.meta.req.headers.should.have.property('header-1');
+          result.log.meta.req.headers.should.have.property('header-2');
+          result.log.meta.req.headers.should.have.property('header-3');
+        });
+      });
+
+      it('should use specified headerBlackList', function () {
+        var options = {
+          loggerOptions: {
+            headerBlacklist: ['header-1', 'Header-3']
+          }
+        };
+        return loggerTestHelper(options).then(function (result) {
+          result.log.meta.req.headers.should.not.have.property('header-1');
+          result.log.meta.req.headers.should.have.property('header-2');
+          result.log.meta.req.headers.should.not.have.property('header-3');
+        });
+      });
+
+      it('should not use specified headerBlackList since the requestWhiteList is empty', function () {
+        var options = {
+          loggerOptions: {
+            requestWhitelist: ['url'],
+            headerBlacklist: ['header-1']
+          }
+        };
+        return loggerTestHelper(options).then(function (result) {
+          result.log.meta.req.should.not.have.property('headers');
+        });
+      });
+
+      it('should not headerBlackList but since a requestFilter is set', function () {
+        const customRequestFilter = (req, propName) => {
+          return (propName !== 'headers') ? req[propName] : undefined;
+        };
+        var options = {
+          loggerOptions: {
+            requestFilter: customRequestFilter,
+            headerBlacklist: ['header-1']
+          }
+        };
+        return loggerTestHelper(options).then(function (result) {
+          result.log.meta.req.should.not.have.property('headers');
+        });
+      });
     });
 
     describe('requestWhitelist option', function () {
       it('should default to global requestWhitelist', function () {
         var options = {
-          req: {foo: "bar"}
+          req: { foo: 'bar' }
         };
         return loggerTestHelper(options).then(function (result) {
           result.log.meta.req.should.not.have.property('foo');
@@ -1098,7 +1317,7 @@ describe('express-winston', function () {
 
       it('should use specified requestWhitelist', function () {
         var options = {
-          req: {foo: "bar"},
+          req: { foo: 'bar' },
           loggerOptions: {
             requestWhitelist: ['foo']
           }
@@ -1109,7 +1328,7 @@ describe('express-winston', function () {
         });
       });
 
-      it('should not include a req in the log when there is no request whitelist', function() {
+      it('should not include a req in the log when there is no request whitelist', function () {
         var options = {
           loggerOptions: {
             requestWhitelist: [],
@@ -1122,14 +1341,14 @@ describe('express-winston', function () {
     });
 
     describe('bodyBlacklist option', function () {
-      it('should remove the body if it is requestWhitelisted and the bodyBlacklist removes all properties', function() {
+      it('should remove the body if it is requestWhitelisted and the bodyBlacklist removes all properties', function () {
         var options = {
           loggerOptions: {
             bodyBlacklist: ['foo', 'baz'],
             requestWhitelist: ['body'],
           },
           req: {
-            body: {foo: 'bar', baz: 'qux'}
+            body: { foo: 'bar', baz: 'qux' }
           }
         };
         return loggerTestHelper(options).then(function (result) {
@@ -1141,7 +1360,7 @@ describe('express-winston', function () {
     describe('responseWhitelist option', function () {
       it('should default to global responseWhitelist', function () {
         var options = {
-          res: {foo: "bar"}
+          res: { foo: 'bar' }
         };
         return loggerTestHelper(options).then(function (result) {
           result.log.meta.res.should.not.have.property('foo');
@@ -1150,7 +1369,7 @@ describe('express-winston', function () {
 
       it('should use specified responseWhitelist', function () {
         var options = {
-          res: {foo: "bar"},
+          res: { foo: 'bar' },
           loggerOptions: {
             responseWhitelist: ['foo']
           }
@@ -1160,12 +1379,25 @@ describe('express-winston', function () {
           result.log.meta.res.should.not.have.property('method');
         });
       });
+
+      it('should work with nested responseWhitelist', function () {
+        var options = {
+          res: {foo: {test: "bar"}},
+          loggerOptions: {
+            responseWhitelist: ['foo.test']
+          }
+        };
+        return loggerTestHelper(options).then(function (result) {
+          result.log.meta.res.should.have.property('foo');
+          result.log.meta.res.foo.should.have.property('test');
+        });
+      });
     });
 
     describe('ignoredRoutes option', function () {
       it('should default to global ignoredRoutes', function () {
         var options = {
-          req: {url: "/ignored"}
+          req: { url: '/ignored' }
         };
         return loggerTestHelper(options).then(function (result) {
           result.transportInvoked.should.eql(false);
@@ -1174,7 +1406,7 @@ describe('express-winston', function () {
 
       it('should use specified ignoredRoutes', function () {
         var options = {
-          req: {url: "/ignored-option"},
+          req: { url: '/ignored-option' },
           loggerOptions: {
             ignoredRoutes: ['/ignored-option']
           }
@@ -1186,31 +1418,34 @@ describe('express-winston', function () {
     });
 
     describe('dynamicMeta option', function () {
-      var testHelperOptions = {
-        req: {
-          body: {
-            age: 42,
-            potato: 'Russet'
+      var testHelperOptions;
+      beforeEach(() => {
+        testHelperOptions = {
+          req: {
+            body: {
+              age: 42,
+              potato: 'Russet'
+            },
+            user: {
+              username: 'john@doe.com',
+              role: 'operator'
+            }
           },
-          user: {
-            username: "john@doe.com",
-            role: "operator"
-          }
-        },
-        res: {
-          custom: 'custom response runtime field'
-        },
-        loggerOptions: {
-          meta: true,
-          dynamicMeta: function(req, res) {
-            return {
-              user: req.user.username,
-              role: req.user.role,
-              custom: res.custom
+          res: {
+            custom: 'custom response runtime field'
+          },
+          loggerOptions: {
+            meta: true,
+            dynamicMeta: function (req, res) {
+              return {
+                user: req.user.username,
+                role: req.user.role,
+                custom: res.custom
+              };
             }
           }
-        }
-      };
+        };
+      });
 
       it('should contain dynamic meta data if meta and dynamicMeta activated', function () {
         return loggerTestHelper(testHelperOptions).then(function (result) {
@@ -1221,8 +1456,35 @@ describe('express-winston', function () {
         });
       });
 
+      it('should contain request under alternative property if defined', function () {
+        testHelperOptions.loggerOptions.requestField = 'httpRequest';
+        return loggerTestHelper(testHelperOptions).then(function (result) {
+          result.log.meta.httpRequest.should.be.ok();
+        });
+      });
+
       it('should work with metaField option', function () {
         testHelperOptions.loggerOptions.metaField = 'metaField';
+        return loggerTestHelper(testHelperOptions).then(function (result) {
+          result.log.metaField.req.should.be.ok();
+          result.log.metaField.user.should.equal('john@doe.com');
+          result.log.metaField.role.should.equal('operator');
+          result.log.metaField.custom.should.equal('custom response runtime field');
+        });
+      });
+
+      it('should work with metaField option with . syntax', function () {
+        testHelperOptions.loggerOptions.metaField = 'meta.metaField';
+        return loggerTestHelper(testHelperOptions).then(function (result) {
+          result.log.meta.metaField.req.should.be.ok();
+          result.log.meta.metaField.user.should.equal('john@doe.com');
+          result.log.meta.metaField.role.should.equal('operator');
+          result.log.meta.metaField.custom.should.equal('custom response runtime field');
+        });
+      });
+
+      it('should work with metaField option with array syntax', function () {
+        testHelperOptions.loggerOptions.metaField = ['meta', 'metaField'];
         return loggerTestHelper(testHelperOptions).then(function (result) {
           result.log.meta.metaField.req.should.be.ok();
           result.log.meta.metaField.user.should.equal('john@doe.com');
@@ -1242,7 +1504,7 @@ describe('express-winston', function () {
       });
 
       it('should throw an error if dynamicMeta is not a function', function () {
-        var loggerFn = expressWinston.logger.bind(expressWinston, {dynamicMeta: 12});
+        var loggerFn = expressWinston.logger.bind(expressWinston, { dynamicMeta: 12 });
         loggerFn.should.throw();
       });
     });
@@ -1270,6 +1532,12 @@ describe('express-winston', function () {
     });
   });
 
+  describe('.defaultHeaderBlacklist', function () {
+    it('should be an array with all the header which are prevented to be logged', function () {
+      expressWinston.defaultHeaderBlacklist.should.be.an.Array();
+    });
+  });
+
   describe('.defaultRequestFilter', function () {
     it('should be a function', function () {
       expressWinston.defaultRequestFilter.should.be.a.Function();
@@ -1292,5 +1560,9 @@ describe('express-winston', function () {
     it('should be an array for all the ignored routes', function () {
       expressWinston.ignoredRoutes.should.be.an.Array();
     });
+  });
+
+  describe('google-logging configuration', () => {
+
   });
 });

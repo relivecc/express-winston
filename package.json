@@ -17,7 +17,7 @@
     "middleware",
     "colors"
   ],
-  "version": "2.5.0",
+  "version": "4.0.4",
   "repository": {
     "type": "git",
     "url": "https://github.com/bithavoc/express-winston.git"
@@ -28,43 +28,39 @@
   },
   "main": "index.js",
   "scripts": {
-    "test": "node_modules/.bin/mocha --reporter spec",
-    "test-travis": "node_modules/.bin/mocha --require blanket --reporter travis-cov",
-    "test-coverage": "node_modules/.bin/mocha --require blanket --reporter html-cov > coverage.html || true"
-  },
-  "config": {
-    "travis-cov": {
-      "threshold": 100
-    },
-    "blanket": {
-      "pattern": [
-        "index.js"
-      ],
-      "data-cover-never": [
-        "node_modules",
-        "test"
-      ]
-    }
+    "pretest": "eslint .",
+    "test": "node_modules/.bin/mocha --reporter spec"
   },
   "dependencies": {
-    "chalk": "~0.4.0",
-    "lodash": "~4.17.5"
+    "chalk": "^2.4.1",
+    "lodash": "^4.17.19"
   },
   "devDependencies": {
-    "blanket": "^1.2.2",
-    "mocha": "^2.4.5",
+    "@types/express": "^4.17.1",
+    "@types/logform": "^1.2.0",
+    "eslint": "^5.16.0",
+    "mocha": "^5.2.0",
     "node-mocks-http": "^1.5.1",
-    "promise": "^7.1.1",
-    "should": "^8.2.2",
-    "travis-cov": "^0.2.5",
-    "winston": ">=1.x"
+    "nyc": "^14.1.1",
+    "should": "^13.2.3",
+    "winston": ">=3.x <4",
+    "winston-transport": "^4.2.0"
   },
   "peerDependencies": {
-    "winston": ">=1.x"
+    "winston": ">=3.x <4"
   },
   "engines": {
-    "node": ">=0.10.0"
+    "node": ">= 6"
   },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "AUTHORS",
+    "LICENSE",
+    "CHANGELOG.md",
+    "Readme.md",
+    ".npmrc"
+  ],
   "license": "MIT",
   "contributors": [
     {
@@ -87,6 +83,12 @@
       "name": "Robbie Trencheny",
       "email": "me@robbiet.us",
       "url": "http://robbie.io"
+    },
+    {
+      "name": "Matt Morrissette",
+      "email": "yinzara@gmail.com",
+      "url": "https://github.com/yinzara"
     }
-  ]
+  ],
+  "types": "index.d.ts"
 }

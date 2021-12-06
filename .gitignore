@@ -3,6 +3,7 @@
 #################
 /node_modules
 npm-debug.log
+package-lock.json
 
 #################
 ## Jetbrains
@@ -16,5 +17,6 @@ npm-debug.log
 #################
 .DS_Store
 lib/.DS_Store
-coverage.html
+coverage
+.nyc_output
 .vimrc
